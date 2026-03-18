@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 from datetime import datetime, timezone
 
 import pyarrow as pa
@@ -19,7 +20,7 @@ def generate_dataset_version() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
 
-def read_dataset_from_bytes(data: bytes, fmt: str) -> pa.Table:
+def _parse_upload_bytes(data: bytes, fmt: str) -> pa.Table:
     buf = io.BytesIO(data)
     if fmt == "csv":
         return pa_csv.read_csv(buf)
@@ -47,19 +48,6 @@ async def read_upload_to_bytes(upload_file: UploadFile, max_upload_mb: int) -> t
     return b"".join(chunks), hasher.hexdigest()
 
 
-def serialize_table(table: pa.Table, fmt: str) -> tuple[bytes, str]:
-    buf = io.BytesIO()
-    if fmt == "csv":
-        pa_csv.write_csv(table, buf)
-    elif fmt == "parquet":
-        pq.write_table(table, buf)
-    else:
-        raise ValidationError(f"Unsupported format `{fmt}`")
-    data = buf.getvalue()
-    checksum = hashlib.sha256(data).hexdigest()
-    return data, checksum
-
-
 MONTHLY_MATERIALIZED_SCHEMA_TYPES = {"baseline_metrics", "baseline_funnel_steps"}
 NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "baseline_metrics": ("segment_id", "date_start", "date_end"),
@@ -67,19 +55,24 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _merge_materialized_table(schema_type: str, previous: pa.Table | None, current: pa.Table) -> pa.Table:
-    if previous is None or previous.num_rows == 0:
-        return current
+def _merge_rows(schema_type: str, previous_rows: list[dict], current_rows: list[dict]) -> list[dict]:
+    if not previous_rows:
+        return current_rows
 
     key_columns = NATURAL_KEYS[schema_type]
-    merged_rows: dict[tuple[object, ...], dict[str, object]] = {
-        tuple(row[column] for column in key_columns): row
-        for row in previous.to_pylist()
+    merged: dict[tuple, dict] = {
+        tuple(row[col] for col in key_columns): row
+        for row in previous_rows
     }
-    for row in current.to_pylist():
-        merged_rows[tuple(row[column] for column in key_columns)] = row
-    ordered_rows = sorted(merged_rows.values(), key=lambda row: tuple(row[column] for column in key_columns))
-    return pa.Table.from_pylist(ordered_rows, schema=current.schema)
+    for row in current_rows:
+        merged[tuple(row[col] for col in key_columns)] = row
+    return sorted(merged.values(), key=lambda row: tuple(str(row[col]) for col in key_columns))
+
+
+def compute_rows_checksum(rows: list[dict]) -> str:
+    sorted_rows = sorted(rows, key=lambda r: tuple(str(r.get(k, "")) for k in sorted(r.keys())))
+    content = json.dumps(sorted_rows, sort_keys=True, default=str)
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 async def store_and_register_dataset(
@@ -96,27 +89,27 @@ async def store_and_register_dataset(
     column_mapping: dict[str, str] | None = None,
 ) -> Dataset:
     raw_bytes, _ = await read_upload_to_bytes(upload_file, max_upload_mb=max_upload_mb)
-    source_table = read_dataset_from_bytes(raw_bytes, fmt)
+    source_table = _parse_upload_bytes(raw_bytes, fmt)
     table, source_columns, resolved_mapping = apply_column_mapping(
         source_table,
         schema_type=schema_type,
         column_mapping=column_mapping,
     )
 
+    rows = table.to_pylist()
     latest_snapshot: Dataset | None = None
+
     if schema_type in MONTHLY_MATERIALIZED_SCHEMA_TYPES:
         latest_snapshot = await dataset_repo.get_latest_dataset_by_name(session, dataset_name=dataset_name, scope=scope)
-        previous_table = None
         if latest_snapshot:
-            previous_blob = await dataset_repo.get_dataset_blob(session, latest_snapshot.id)
-            if previous_blob:
-                previous_table = read_dataset_from_bytes(previous_blob, latest_snapshot.format)
-        table = _merge_materialized_table(schema_type, previous_table, table)
+            previous_rows = await dataset_repo.get_dataset_rows(session, latest_snapshot.id, schema_type)
+            rows = _merge_rows(schema_type, previous_rows, rows)
+            table = pa.Table.from_pylist(rows, schema=table.schema)
 
     validate_dataset_table(schema_type=schema_type, table=table)
-    final_bytes, checksum = serialize_table(table, fmt)
+    checksum = compute_rows_checksum(rows)
 
-    row_count = table.num_rows
+    row_count = len(rows)
     columns = list(table.column_names)
 
     record = Dataset(
@@ -125,7 +118,6 @@ async def store_and_register_dataset(
         scope=scope,
         schema_type=schema_type,
         format=fmt,
-        file_path=None,
         checksum_sha256=checksum,
         row_count=row_count,
         columns_json={
@@ -141,7 +133,7 @@ async def store_and_register_dataset(
     session.add(record)
     try:
         await session.flush()
-        await dataset_repo.store_dataset_blob(session, record.id, final_bytes)
+        await dataset_repo.store_dataset_rows(session, record.id, schema_type, rows)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -207,11 +199,6 @@ def apply_column_mapping(
 
     remapped = pa.table(columns_data)
     return remapped, source_columns, resolved_mapping
-
-
-def table_preview_from_bytes(data: bytes, fmt: str, limit: int) -> list[dict]:
-    table = read_dataset_from_bytes(data, fmt)
-    return table.slice(0, limit).to_pylist()
 
 
 async def fetch_dataset_or_404(

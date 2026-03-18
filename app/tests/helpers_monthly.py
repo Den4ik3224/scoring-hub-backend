@@ -129,7 +129,6 @@ def dataset_stub(*, schema_type: str = "baseline_metrics", version: str = "v1") 
         version=version,
         schema_type=schema_type,
         format="csv",
-        file_path=None,
         checksum_sha256="x" * 64,
         row_count=1,
         columns_json={"columns": []},

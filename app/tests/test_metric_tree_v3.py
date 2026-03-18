@@ -169,9 +169,8 @@ def test_resolve_scoring_inputs_uses_default_metric_tree_v3(tmp_path: Path) -> N
                     version="v1",
                     schema_type="baseline_metrics",
                     format="csv",
-                    file_path=None,
                     checksum_sha256="x" * 64,
-                    row_count=1,
+                    row_count=3,
                     columns_json={"columns": []},
                     schema_version="v1",
                     uploaded_by="tester",
@@ -179,7 +178,10 @@ def test_resolve_scoring_inputs_uses_default_metric_tree_v3(tmp_path: Path) -> N
                 )
                 session.add(ds)
                 await session.flush()
-                await dataset_repo.store_dataset_blob(session, ds.id, baseline_csv_bytes)
+                import io
+                import pyarrow.csv as pa_csv
+                baseline_table = pa_csv.read_csv(io.BytesIO(baseline_csv_bytes))
+                await dataset_repo.store_dataset_rows(session, ds.id, "baseline_metrics", baseline_table.to_pylist())
                 await session.commit()
                 payload = ScoreRunRequest(
                     initiative_name="default-graph",

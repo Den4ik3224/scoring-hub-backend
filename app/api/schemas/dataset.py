@@ -14,10 +14,6 @@ class DatasetSchemaType(str, Enum):
     baseline_metrics = "baseline_metrics"
     baseline_funnel_steps = "baseline_funnel_steps"
     cannibalization_matrix = "cannibalization_matrix"
-    baseline_screen_mix = "baseline_screen_mix"
-    baseline_aoq_components = "baseline_aoq_components"
-    evidence_priors = "evidence_priors"
-    segment_list = "segment_list"
 
 
 class UploadDatasetSchemaType(str, Enum):
@@ -33,7 +29,6 @@ class DatasetRecord(BaseModel):
     scope: str
     schema_type: DatasetSchemaType
     format: DatasetFormat
-    file_path: str | None = None
     checksum_sha256: str
     row_count: int
     columns: list[str]

@@ -13,8 +13,6 @@ from app.db.models import Dataset
 from app.db.repositories import ab_results as learning_repo
 from app.db.repositories import configs as config_repo
 from app.db.repositories import datasets as dataset_repo
-from app.db.repositories import datasets as dataset_repo_module
-from app.services.dataset_registry import read_dataset_from_bytes
 from app.services.learning_engine import resolve_learning_config, scoring_metric_drivers
 from app.services.monthly_baselines import (
     ResolvedBaselineWindow,
@@ -132,10 +130,10 @@ async def resolve_scoring_inputs(
         scope=data_scope,
     )
     assert baseline_dataset is not None
-    baseline_blob = await dataset_repo_module.get_dataset_blob(session, baseline_dataset.id)
-    if not baseline_blob:
-        raise NotFoundError(f"Dataset blob not found for {baseline_dataset.dataset_name} v{baseline_dataset.version}")
-    baseline_table_full = read_dataset_from_bytes(baseline_blob, baseline_dataset.format)
+    baseline_rows = await dataset_repo.get_dataset_rows(session, baseline_dataset.id, "baseline_metrics")
+    if not baseline_rows:
+        raise NotFoundError(f"Dataset rows not found for {baseline_dataset.dataset_name} v{baseline_dataset.version}")
+    baseline_table_full = pa.Table.from_pylist(baseline_rows)
     baseline_window = resolve_baseline_window(
         baseline_table_full,
         baseline_window=payload.baseline_window,
@@ -159,10 +157,10 @@ async def resolve_scoring_inputs(
     funnel_table = None
     funnel_index: dict[tuple[str, str], list[FunnelStepAggregate]] = {}
     if funnel_dataset:
-        funnel_blob = await dataset_repo_module.get_dataset_blob(session, funnel_dataset.id)
-        if not funnel_blob:
-            raise NotFoundError(f"Dataset blob not found for {funnel_dataset.dataset_name} v{funnel_dataset.version}")
-        funnel_table_full = read_dataset_from_bytes(funnel_blob, funnel_dataset.format)
+        funnel_rows = await dataset_repo.get_dataset_rows(session, funnel_dataset.id, "baseline_funnel_steps")
+        if not funnel_rows:
+            raise NotFoundError(f"Dataset rows not found for {funnel_dataset.dataset_name} v{funnel_dataset.version}")
+        funnel_table_full = pa.Table.from_pylist(funnel_rows)
         funnel_table = filter_table_to_window(funnel_table_full, baseline_window)
         funnel_index = aggregate_funnel_steps(
             funnel_table,
@@ -187,10 +185,10 @@ async def resolve_scoring_inputs(
             scope=data_scope,
         )
         assert cann_dataset is not None
-        cann_blob = await dataset_repo_module.get_dataset_blob(session, cann_dataset.id)
-        if not cann_blob:
-            raise NotFoundError(f"Dataset blob not found for {cann_dataset.dataset_name} v{cann_dataset.version}")
-        cann_table = read_dataset_from_bytes(cann_blob, cann_dataset.format)
+        cann_rows = await dataset_repo.get_dataset_rows(session, cann_dataset.id, "cannibalization_matrix")
+        if not cann_rows:
+            raise NotFoundError(f"Dataset rows not found for {cann_dataset.dataset_name} v{cann_dataset.version}")
+        cann_table = pa.Table.from_pylist(cann_rows)
 
     evidence_source, evidence_priors = await _resolve_evidence_priors(session)
     metric_tree_source, metric_tree_definition = await _resolve_metric_tree(session, payload)
@@ -308,7 +306,6 @@ async def resolve_scoring_inputs(
                 "version": baseline_dataset.version,
                 "scope": baseline_dataset.scope,
                 "checksum": baseline_dataset.checksum_sha256,
-                "file_path": baseline_dataset.file_path,
             },
         },
         "evidence_priors_source": evidence_source,
@@ -327,7 +324,6 @@ async def resolve_scoring_inputs(
             "version": funnel_dataset.version,
             "scope": funnel_dataset.scope,
             "checksum": funnel_dataset.checksum_sha256,
-            "file_path": funnel_dataset.file_path,
         }
     if cann_dataset:
         resolved_inputs_json["datasets"]["cannibalization_matrix"] = {
@@ -335,7 +331,6 @@ async def resolve_scoring_inputs(
             "version": cann_dataset.version,
             "scope": cann_dataset.scope,
             "checksum": cann_dataset.checksum_sha256,
-            "file_path": cann_dataset.file_path,
         }
 
     return ResolvedScoringInputs(

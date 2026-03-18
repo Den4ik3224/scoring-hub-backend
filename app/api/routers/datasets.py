@@ -1,6 +1,3 @@
-import hashlib
-from pathlib import Path
-
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,7 +20,6 @@ from app.services.dataset_registry import (
     fetch_dataset_or_404,
     generate_dataset_version,
     store_and_register_dataset,
-    table_preview_from_bytes,
 )
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -38,7 +34,6 @@ def _to_record(model: Dataset, is_latest: bool = False) -> DatasetRecord:
         scope=model.scope,
         schema_type=model.schema_type,
         format=model.format,
-        file_path=model.file_path,
         checksum_sha256=model.checksum_sha256,
         row_count=model.row_count,
         columns=columns_json.get("columns", []),
@@ -146,52 +141,7 @@ async def preview_dataset(
         raise ValidationError(f"Preview limit cannot exceed {settings.preview_max_limit}")
 
     record = await fetch_dataset_or_404(session, dataset_name=dataset_name, version=version, scope=scope)
-    blob = await dataset_repo.get_dataset_blob(session, record.id)
-    if not blob:
+    rows = await dataset_repo.get_dataset_rows_preview(session, record.id, record.schema_type, limit)
+    if not rows:
         raise NotFoundError(f"Dataset content not found for `{dataset_name}` version `{version}`")
-    rows = table_preview_from_bytes(data=blob, fmt=record.format, limit=limit)
     return DatasetPreviewResponse(dataset_name=dataset_name, version=version, limit=limit, rows=rows)
-
-
-@router.post("/migrate-to-db")
-async def migrate_datasets_to_db(
-    principal: Principal = Depends(require_admin),
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Temporary endpoint: migrate dataset files from filesystem to DB blobs."""
-    records = await dataset_repo.list_datasets(session)
-    migrated = 0
-    skipped = 0
-    errors: list[str] = []
-
-    for record in records:
-        existing_blob = await dataset_repo.get_dataset_blob(session, record.id)
-        if existing_blob:
-            skipped += 1
-            continue
-
-        if not record.file_path:
-            errors.append(f"{record.dataset_name}:{record.version} — no file_path")
-            continue
-
-        file_path = Path(record.file_path)
-        if not file_path.exists():
-            errors.append(f"{record.dataset_name}:{record.version} — file not found: {record.file_path}")
-            continue
-
-        try:
-            data = file_path.read_bytes()
-            checksum = hashlib.sha256(data).hexdigest()
-            if checksum != record.checksum_sha256:
-                errors.append(
-                    f"{record.dataset_name}:{record.version} — checksum mismatch "
-                    f"(expected {record.checksum_sha256[:8]}..., got {checksum[:8]}...)"
-                )
-                continue
-            await dataset_repo.store_dataset_blob(session, record.id, data)
-            migrated += 1
-        except Exception as exc:
-            errors.append(f"{record.dataset_name}:{record.version} — {exc}")
-
-    await session.commit()
-    return {"migrated": migrated, "skipped": skipped, "errors": errors}
