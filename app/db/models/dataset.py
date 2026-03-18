@@ -19,7 +19,7 @@ class Dataset(Base, UuidPrimaryKeyMixin, TimestampMixin):
     scope: Mapped[str] = mapped_column(String(64), nullable=False, default="prod")
     schema_type: Mapped[str] = mapped_column(String(64), nullable=False)
     format: Mapped[str] = mapped_column(String(16), nullable=False)
-    file_path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     checksum_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     row_count: Mapped[int] = mapped_column(Integer, nullable=False)
     columns_json: Mapped[dict] = mapped_column(JSON, nullable=False)

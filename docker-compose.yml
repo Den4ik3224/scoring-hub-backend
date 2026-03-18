@@ -23,16 +23,13 @@ services:
       - .env.example
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/scoring
-      DATA_DIR: /data
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
-      - data_volume:/data
       - ./examples:/workspace/examples:ro
 
 volumes:
   postgres_data:
-  data_volume:

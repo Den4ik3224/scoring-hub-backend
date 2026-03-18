@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
@@ -14,7 +13,8 @@ from app.db.models import Dataset
 from app.db.repositories import ab_results as learning_repo
 from app.db.repositories import configs as config_repo
 from app.db.repositories import datasets as dataset_repo
-from app.services.dataset_registry import read_dataset_table
+from app.db.repositories import datasets as dataset_repo_module
+from app.services.dataset_registry import read_dataset_from_bytes
 from app.services.learning_engine import resolve_learning_config, scoring_metric_drivers
 from app.services.monthly_baselines import (
     ResolvedBaselineWindow,
@@ -132,7 +132,10 @@ async def resolve_scoring_inputs(
         scope=data_scope,
     )
     assert baseline_dataset is not None
-    baseline_table_full = read_dataset_table(Path(baseline_dataset.file_path), baseline_dataset.format)
+    baseline_blob = await dataset_repo_module.get_dataset_blob(session, baseline_dataset.id)
+    if not baseline_blob:
+        raise NotFoundError(f"Dataset blob not found for {baseline_dataset.dataset_name} v{baseline_dataset.version}")
+    baseline_table_full = read_dataset_from_bytes(baseline_blob, baseline_dataset.format)
     baseline_window = resolve_baseline_window(
         baseline_table_full,
         baseline_window=payload.baseline_window,
@@ -156,7 +159,10 @@ async def resolve_scoring_inputs(
     funnel_table = None
     funnel_index: dict[tuple[str, str], list[FunnelStepAggregate]] = {}
     if funnel_dataset:
-        funnel_table_full = read_dataset_table(Path(funnel_dataset.file_path), funnel_dataset.format)
+        funnel_blob = await dataset_repo_module.get_dataset_blob(session, funnel_dataset.id)
+        if not funnel_blob:
+            raise NotFoundError(f"Dataset blob not found for {funnel_dataset.dataset_name} v{funnel_dataset.version}")
+        funnel_table_full = read_dataset_from_bytes(funnel_blob, funnel_dataset.format)
         funnel_table = filter_table_to_window(funnel_table_full, baseline_window)
         funnel_index = aggregate_funnel_steps(
             funnel_table,
@@ -181,7 +187,10 @@ async def resolve_scoring_inputs(
             scope=data_scope,
         )
         assert cann_dataset is not None
-        cann_table = read_dataset_table(Path(cann_dataset.file_path), cann_dataset.format)
+        cann_blob = await dataset_repo_module.get_dataset_blob(session, cann_dataset.id)
+        if not cann_blob:
+            raise NotFoundError(f"Dataset blob not found for {cann_dataset.dataset_name} v{cann_dataset.version}")
+        cann_table = read_dataset_from_bytes(cann_blob, cann_dataset.format)
 
     evidence_source, evidence_priors = await _resolve_evidence_priors(session)
     metric_tree_source, metric_tree_definition = await _resolve_metric_tree(session, payload)

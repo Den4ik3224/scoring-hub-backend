@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir --upgrade pip \
 COPY alembic.ini ./alembic.ini
 COPY app ./app
 COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh && mkdir -p /data
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 8000
 ENTRYPOINT ["/entrypoint.sh"]

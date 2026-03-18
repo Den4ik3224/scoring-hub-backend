@@ -30,7 +30,7 @@ async def test_get_current_principal_supports_es256_with_jwks(monkeypatch: pytes
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_url="https://example.supabase.co",
         supabase_jwt_secret=None,
     )
@@ -78,7 +78,7 @@ async def test_get_current_principal_supports_hs256_fallback() -> None:
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_jwt_secret="secret",
     )
     token = jwt.encode({"sub": "u1", "role": "user"}, "secret", algorithm="HS256")
@@ -96,7 +96,7 @@ async def test_get_current_principal_rejects_disallowed_algorithm() -> None:
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_jwt_secret="secret",
         jwt_allowed_algs="ES256,RS256",
     )
@@ -114,7 +114,7 @@ async def test_role_resolution_prefers_app_role_claim() -> None:
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_jwt_secret="secret",
     )
     token = jwt.encode(
@@ -140,7 +140,7 @@ async def test_role_resolution_uses_app_metadata_for_authenticated_supabase_role
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_jwt_secret="secret",
     )
     token = jwt.encode(
@@ -165,7 +165,7 @@ async def test_role_resolution_defaults_to_user_for_non_business_role() -> None:
     settings = Settings(
         auth_mode="supabase_jwt",
         database_url="sqlite+aiosqlite://",
-        data_dir="/tmp",
+        data_dir=None,
         supabase_jwt_secret="secret",
     )
     token = jwt.encode(

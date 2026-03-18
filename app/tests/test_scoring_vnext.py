@@ -194,7 +194,7 @@ def test_scoring_policy_persistence_in_run_artifacts(tmp_path: Path) -> None:
         return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
     session_maker = asyncio.run(_setup())
-    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
     client = _override_app(session_maker, settings)
 
     try:

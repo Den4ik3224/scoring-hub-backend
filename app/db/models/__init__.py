@@ -3,6 +3,7 @@ from app.db.models.config_screen import ConfigScreen
 from app.db.models.config_segment import ConfigSegment
 from app.db.models.config_metric import ConfigMetric
 from app.db.models.dataset import Dataset
+from app.db.models.dataset_blob import DatasetBlob
 from app.db.models.evidence_priors_set import EvidencePriorsSet
 from app.db.models.initiative import Initiative
 from app.db.models.initiative_version import InitiativeVersion
@@ -18,6 +19,7 @@ __all__ = [
     "ConfigSegment",
     "ConfigMetric",
     "Dataset",
+    "DatasetBlob",
     "EvidencePriorsSet",
     "Initiative",
     "InitiativeVersion",

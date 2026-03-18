@@ -2,6 +2,7 @@ from sqlalchemy import Select, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Dataset
+from app.db.models.dataset_blob import DatasetBlob
 
 
 async def get_dataset_by_name_version(
@@ -70,6 +71,17 @@ async def get_latest_dataset_by_schema_type(
         .limit(1)
     )
     return await session.scalar(stmt)
+
+
+async def get_dataset_blob(session: AsyncSession, dataset_id: str) -> bytes | None:
+    stmt = select(DatasetBlob.data).where(DatasetBlob.dataset_id == dataset_id)
+    return await session.scalar(stmt)
+
+
+async def store_dataset_blob(session: AsyncSession, dataset_id: str, data: bytes) -> DatasetBlob:
+    blob = DatasetBlob(dataset_id=dataset_id, data=data)
+    session.add(blob)
+    return blob
 
 
 async def get_dataset_by_schema_type_version(

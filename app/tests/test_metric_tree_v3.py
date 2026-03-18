@@ -117,7 +117,7 @@ def _setup_client(tmp_path: Path) -> tuple[TestClient, async_sessionmaker[AsyncS
     app.dependency_overrides[get_session] = _session_override
     app.dependency_overrides[get_settings] = lambda: Settings(
         database_url="sqlite+aiosqlite://",
-        data_dir=tmp_path,
+        data_dir=None,
         max_upload_mb=10,
         auth_mode="disabled",
     )
@@ -151,35 +151,35 @@ def test_metric_tree_versions_endpoint_marks_legacy_v1_v2_and_default_v3(tmp_pat
 
 
 def test_resolve_scoring_inputs_uses_default_metric_tree_v3(tmp_path: Path) -> None:
-    baseline_path = tmp_path / "baseline.csv"
-    baseline_path.write_text(
-        "segment_id,date_start,date_end,active_users,ordering_users,orders,items,rto,fm\n"
-        "s1,2025-01-01,2025-01-31,1000,100,200,400,40000,12000\n"
-        "s1,2025-02-01,2025-02-28,1000,100,200,400,40000,12000\n"
-        "s1,2025-03-01,2025-03-31,1000,100,200,400,40000,12000\n",
-        encoding="utf-8",
+    baseline_csv_bytes = (
+        b"segment_id,date_start,date_end,active_users,ordering_users,orders,items,rto,fm\n"
+        b"s1,2025-01-01,2025-01-31,1000,100,200,400,40000,12000\n"
+        b"s1,2025-02-01,2025-02-28,1000,100,200,400,40000,12000\n"
+        b"s1,2025-03-01,2025-03-31,1000,100,200,400,40000,12000\n"
     )
     client, session_maker, engine = _setup_client(tmp_path)
     del client
     try:
         async def _seed_and_resolve() -> str:
+            from app.db.repositories import datasets as dataset_repo
             async with session_maker() as session:
                 session.add_all([_graph("v1", is_default=False), _graph("v2", is_default=False), _graph("v3", is_default=True)])
-                session.add(
-                    Dataset(
-                        dataset_name="baseline",
-                        version="v1",
-                        schema_type="baseline_metrics",
-                        format="csv",
-                        file_path=str(baseline_path),
-                        checksum_sha256="x" * 64,
-                        row_count=1,
-                        columns_json={"columns": []},
-                        schema_version="v1",
-                        uploaded_by="tester",
-                        scope="prod",
-                    )
+                ds = Dataset(
+                    dataset_name="baseline",
+                    version="v1",
+                    schema_type="baseline_metrics",
+                    format="csv",
+                    file_path=None,
+                    checksum_sha256="x" * 64,
+                    row_count=1,
+                    columns_json={"columns": []},
+                    schema_version="v1",
+                    uploaded_by="tester",
+                    scope="prod",
                 )
+                session.add(ds)
+                await session.flush()
+                await dataset_repo.store_dataset_blob(session, ds.id, baseline_csv_bytes)
                 await session.commit()
                 payload = ScoreRunRequest(
                     initiative_name="default-graph",

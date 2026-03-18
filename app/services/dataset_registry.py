@@ -1,8 +1,7 @@
 import hashlib
+import io
 from datetime import datetime, timezone
-from pathlib import Path
 
-import duckdb
 import pyarrow as pa
 import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
@@ -20,38 +19,45 @@ def generate_dataset_version() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
 
-def read_dataset_table(file_path: Path, fmt: str) -> pa.Table:
-    con = duckdb.connect(database=":memory:")
-    try:
-        if fmt == "csv":
-            return con.execute("SELECT * FROM read_csv_auto(?)", [str(file_path)]).fetch_arrow_table()
-        if fmt == "parquet":
-            return con.execute("SELECT * FROM read_parquet(?)", [str(file_path)]).fetch_arrow_table()
-        raise ValidationError(f"Unsupported format `{fmt}`")
-    finally:
-        con.close()
+def read_dataset_from_bytes(data: bytes, fmt: str) -> pa.Table:
+    buf = io.BytesIO(data)
+    if fmt == "csv":
+        return pa_csv.read_csv(buf)
+    if fmt == "parquet":
+        return pq.read_table(buf)
+    raise ValidationError(f"Unsupported format `{fmt}`")
 
 
-async def persist_upload_file(upload_file: UploadFile, target_path: Path, max_upload_mb: int) -> tuple[int, str]:
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-
+async def read_upload_to_bytes(upload_file: UploadFile, max_upload_mb: int) -> tuple[bytes, str]:
     max_bytes = max_upload_mb * 1024 * 1024
     hasher = hashlib.sha256()
+    chunks: list[bytes] = []
     size = 0
 
-    with target_path.open("wb") as f:
-        while True:
-            chunk = await upload_file.read(1024 * 1024)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > max_bytes:
-                raise ValidationError(f"File exceeds max upload size ({max_upload_mb}MB)")
-            hasher.update(chunk)
-            f.write(chunk)
+    while True:
+        chunk = await upload_file.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > max_bytes:
+            raise ValidationError(f"File exceeds max upload size ({max_upload_mb}MB)")
+        hasher.update(chunk)
+        chunks.append(chunk)
 
-    await upload_file.seek(0)
-    return size, hasher.hexdigest()
+    return b"".join(chunks), hasher.hexdigest()
+
+
+def serialize_table(table: pa.Table, fmt: str) -> tuple[bytes, str]:
+    buf = io.BytesIO()
+    if fmt == "csv":
+        pa_csv.write_csv(table, buf)
+    elif fmt == "parquet":
+        pq.write_table(table, buf)
+    else:
+        raise ValidationError(f"Unsupported format `{fmt}`")
+    data = buf.getvalue()
+    checksum = hashlib.sha256(data).hexdigest()
+    return data, checksum
 
 
 MONTHLY_MATERIALIZED_SCHEMA_TYPES = {"baseline_metrics", "baseline_funnel_steps"}
@@ -59,26 +65,6 @@ NATURAL_KEYS: dict[str, tuple[str, ...]] = {
     "baseline_metrics": ("segment_id", "date_start", "date_end"),
     "baseline_funnel_steps": ("segment_id", "screen", "step_id", "date_start", "date_end"),
 }
-
-
-def _materialize_table(table: pa.Table, file_path: Path, fmt: str) -> str:
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    if fmt == "csv":
-        with file_path.open("wb") as handle:
-            pa_csv.write_csv(table, handle)
-    elif fmt == "parquet":
-        pq.write_table(table, file_path)
-    else:
-        raise ValidationError(f"Unsupported format `{fmt}`")
-
-    hasher = hashlib.sha256()
-    with file_path.open("rb") as handle:
-        while True:
-            chunk = handle.read(1024 * 1024)
-            if not chunk:
-                break
-            hasher.update(chunk)
-    return hasher.hexdigest()
 
 
 def _merge_materialized_table(schema_type: str, previous: pa.Table | None, current: pa.Table) -> pa.Table:
@@ -104,32 +90,31 @@ async def store_and_register_dataset(
     version: str,
     schema_type: str,
     fmt: str,
-    data_dir: Path,
     uploaded_by: str,
     max_upload_mb: int,
     scope: str = "prod",
     column_mapping: dict[str, str] | None = None,
 ) -> Dataset:
-    filename = upload_file.filename or f"dataset.{fmt}"
-    file_path = data_dir / dataset_name / version / filename
-
-    await persist_upload_file(upload_file, file_path, max_upload_mb=max_upload_mb)
-    source_table = read_dataset_table(file_path, fmt)
+    raw_bytes, _ = await read_upload_to_bytes(upload_file, max_upload_mb=max_upload_mb)
+    source_table = read_dataset_from_bytes(raw_bytes, fmt)
     table, source_columns, resolved_mapping = apply_column_mapping(
         source_table,
         schema_type=schema_type,
         column_mapping=column_mapping,
     )
+
     latest_snapshot: Dataset | None = None
     if schema_type in MONTHLY_MATERIALIZED_SCHEMA_TYPES:
         latest_snapshot = await dataset_repo.get_latest_dataset_by_name(session, dataset_name=dataset_name, scope=scope)
         previous_table = None
         if latest_snapshot:
-            previous_table = read_dataset_table(Path(latest_snapshot.file_path), latest_snapshot.format)
+            previous_blob = await dataset_repo.get_dataset_blob(session, latest_snapshot.id)
+            if previous_blob:
+                previous_table = read_dataset_from_bytes(previous_blob, latest_snapshot.format)
         table = _merge_materialized_table(schema_type, previous_table, table)
 
     validate_dataset_table(schema_type=schema_type, table=table)
-    checksum = _materialize_table(table, file_path, fmt)
+    final_bytes, checksum = serialize_table(table, fmt)
 
     row_count = table.num_rows
     columns = list(table.column_names)
@@ -140,7 +125,7 @@ async def store_and_register_dataset(
         scope=scope,
         schema_type=schema_type,
         format=fmt,
-        file_path=str(file_path),
+        file_path=None,
         checksum_sha256=checksum,
         row_count=row_count,
         columns_json={
@@ -155,6 +140,8 @@ async def store_and_register_dataset(
 
     session.add(record)
     try:
+        await session.flush()
+        await dataset_repo.store_dataset_blob(session, record.id, final_bytes)
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
@@ -222,18 +209,9 @@ def apply_column_mapping(
     return remapped, source_columns, resolved_mapping
 
 
-def table_preview(file_path: str, fmt: str, limit: int) -> list[dict]:
-    con = duckdb.connect(database=":memory:")
-    try:
-        if fmt == "csv":
-            rows = con.execute("SELECT * FROM read_csv_auto(?) LIMIT ?", [file_path, limit]).fetch_arrow_table()
-        elif fmt == "parquet":
-            rows = con.execute("SELECT * FROM read_parquet(?) LIMIT ?", [file_path, limit]).fetch_arrow_table()
-        else:
-            raise ValidationError(f"Unsupported format `{fmt}`")
-        return rows.to_pylist()
-    finally:
-        con.close()
+def table_preview_from_bytes(data: bytes, fmt: str, limit: int) -> list[dict]:
+    table = read_dataset_from_bytes(data, fmt)
+    return table.slice(0, limit).to_pylist()
 
 
 async def fetch_dataset_or_404(

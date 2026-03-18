@@ -29,7 +29,7 @@ class DatasetRecord(BaseModel):
     scope: str
     schema_type: DatasetSchemaType
     format: DatasetFormat
-    file_path: str
+    file_path: str | None = None
     checksum_sha256: str
     row_count: int
     columns: list[str]

@@ -425,7 +425,7 @@ def test_initiative_runtime_overrides_are_merged_and_version_scope_is_first_clas
             yield session
 
     app.dependency_overrides[get_session] = _session_override
-    app.dependency_overrides[get_settings] = lambda: Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    app.dependency_overrides[get_settings] = lambda: Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
     client = TestClient(app)
     try:
         team = client.post("/teams", json={"slug": "core", "name": "Core"})

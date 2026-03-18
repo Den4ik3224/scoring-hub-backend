@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     auth_mode: Literal["disabled", "supabase_jwt"] = "disabled"
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/scoring"
     migration_database_url: str | None = None
-    data_dir: Path = Path("/data")
+    data_dir: Path | None = None
 
     max_upload_mb: int = Field(default=100, ge=1, le=4096)
     preview_max_limit: int = Field(default=200, ge=1, le=1000)

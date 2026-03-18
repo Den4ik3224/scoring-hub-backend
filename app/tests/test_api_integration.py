@@ -55,7 +55,7 @@ def test_upload_preview_and_score_happy_path(tmp_path: Path) -> None:
     import asyncio
 
     session_maker = asyncio.run(_setup())
-    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
 
     client = _override_app(session_maker, settings)
 
@@ -132,7 +132,7 @@ def test_auth_and_admin_enforcement(tmp_path: Path) -> None:
     session_maker = asyncio.run(_setup())
     settings = Settings(
         database_url="sqlite+aiosqlite://",
-        data_dir=tmp_path,
+        data_dir=None,
         max_upload_mb=10,
         auth_mode="supabase_jwt",
         supabase_jwt_secret="secret",
@@ -197,7 +197,7 @@ def test_auth_with_supabase_jwks_es256(tmp_path: Path, monkeypatch: pytest.Monke
     _reset_jwks_cache_for_tests()
     settings = Settings(
         database_url="sqlite+aiosqlite://",
-        data_dir=tmp_path,
+        data_dir=None,
         max_upload_mb=10,
         auth_mode="supabase_jwt",
         supabase_url="https://example.supabase.co",
@@ -280,7 +280,7 @@ def test_learning_api_auth_and_create_flow(tmp_path: Path) -> None:
     session_maker = asyncio.run(_setup())
     settings = Settings(
         database_url="sqlite+aiosqlite://",
-        data_dir=tmp_path,
+        data_dir=None,
         auth_mode="supabase_jwt",
         supabase_jwt_secret="secret",
     )
@@ -342,7 +342,7 @@ def test_learning_scope_filters_and_score_scope_default_prod(tmp_path: Path) -> 
     import asyncio
 
     session_maker = asyncio.run(_setup())
-    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
     client = _override_app(session_maker, settings)
 
     upload_resp = client.post(
@@ -445,7 +445,7 @@ def test_dashboard_summary_and_initiatives_latest_run_metrics(tmp_path: Path) ->
     import asyncio
 
     session_maker = asyncio.run(_setup())
-    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
     client = _override_app(session_maker, settings)
 
     upload_resp = client.post(
@@ -527,7 +527,7 @@ def test_failed_run_status_persistence_and_filtering(tmp_path: Path) -> None:
     import asyncio
 
     session_maker = asyncio.run(_setup())
-    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=tmp_path, max_upload_mb=10)
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
     client = _override_app(session_maker, settings)
 
     upload_resp = client.post(
