@@ -1,0 +1,7 @@
+segment_id,screen,traffic_share
+new_users,home,0.45
+new_users,catalog,0.35
+new_users,search,0.20
+returning_users,home,0.30
+returning_users,catalog,0.50
+returning_users,search,0.20

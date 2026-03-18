@@ -1,0 +1,4 @@
+evidence_type,default_confidence,default_uplift_sd,default_dist_type
+ab_test,0.9,0.03,normal
+expert_opinion,0.5,0.10,normal
+market_benchmark,0.7,0.06,triangular

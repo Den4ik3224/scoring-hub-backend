@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "backlog-scoring-service"
+version = "0.1.0"
+description = "Backlog scoring service with uncertainty and auditability"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116.0,<1.0.0",
+  "uvicorn[standard]>=0.35.0,<1.0.0",
+  "pydantic>=2.11.0,<3.0.0",
+  "pydantic-settings>=2.10.0,<3.0.0",
+  "sqlalchemy>=2.0.39,<3.0.0",
+  "asyncpg>=0.30.0,<1.0.0",
+  "psycopg2-binary>=2.9.10,<3.0.0",
+  "alembic>=1.16.0,<2.0.0",
+  "duckdb>=1.3.0,<2.0.0",
+  "pyarrow>=21.0.0,<22.0.0",
+  "numpy>=2.3.0,<3.0.0",
+  "pyjwt>=2.10.0,<3.0.0",
+  "cryptography>=44.0.0,<45.0.0",
+  "python-multipart>=0.0.20,<1.0.0",
+  "structlog>=25.4.0,<26.0.0",
+  "orjson>=3.11.0,<4.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0,<9.0.0",
+  "pytest-asyncio>=1.1.0,<2.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "aiosqlite>=0.21.0,<1.0.0",
+  "hypothesis>=6.130.0,<7.0.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.setuptools]
+packages = ["app"]

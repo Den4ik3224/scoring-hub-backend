@@ -1,0 +1,6 @@
+template_name,version,node_id,parent_node_id,metric_formula,is_targetable
+commerce_v1,v1,mau_effective,root,mau*penetration,true
+commerce_v1,v1,orders,mau_effective,mau_effective*conversion*frequency_weekly,true
+commerce_v1,v1,items,orders,orders*aoq,true
+commerce_v1,v1,gmv,items,items*aiv,true
+commerce_v1,v1,margin,gmv,gmv*fm_pct,true

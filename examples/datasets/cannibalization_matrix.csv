@@ -1,0 +1,5 @@
+from_screen,to_screen,segment_id,cannibalization_rate
+home,catalog,new_users,0.15
+home,search,new_users,0.10
+home,catalog,returning_users,0.20
+search,catalog,returning_users,0.12

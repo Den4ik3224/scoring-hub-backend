@@ -1,0 +1,11 @@
+segment_id,screen,step_id,step_name,step_order,baseline_rate
+new_users,home,home_to_catalog,home_to_catalog,1,0.55
+new_users,catalog,catalog_to_cart,catalog_to_cart,2,0.25
+new_users,search,search_to_cart,search_to_cart,2,0.22
+new_users,catalog,cart_to_checkout,cart_to_checkout,3,0.45
+new_users,catalog,checkout_to_payment,checkout_to_payment,4,0.6
+returning_users,home,home_to_catalog,home_to_catalog,1,0.62
+returning_users,catalog,catalog_to_cart,catalog_to_cart,2,0.31
+returning_users,search,search_to_cart,search_to_cart,2,0.28
+returning_users,catalog,cart_to_checkout,cart_to_checkout,3,0.5
+returning_users,catalog,checkout_to_payment,checkout_to_payment,4,0.68
