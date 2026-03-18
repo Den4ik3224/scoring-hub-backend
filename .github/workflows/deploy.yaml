@@ -6,7 +6,8 @@ on:
 
 env:
   GCP_REGION: europe-west1
-  AR_REPO: europe-west1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/backlog-scoring
+  AR_REGISTRY: europe-west1-docker.pkg.dev
+  AR_REPO_NAME: backlog-scoring
   IMAGE_NAME: api
   CLOUD_RUN_SERVICE: backlog-scoring-service
 
@@ -35,7 +36,6 @@ jobs:
       id-token: write
     outputs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
-      full_image: ${{ steps.meta.outputs.full_image }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +44,6 @@ jobs:
         run: |
           TAG="$(date -u +%Y%m%d-%H%M)-$(echo $GITHUB_SHA | cut -c1-7)"
           echo "image_tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "full_image=${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:$TAG" >> "$GITHUB_OUTPUT"
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -55,23 +54,22 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          registry: europe-west1-docker.pkg.dev
+          registry: ${{ env.AR_REGISTRY }}
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
       - uses: docker/setup-buildx-action@v3
 
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: docker/Dockerfile
-          push: true
-          platforms: linux/amd64
-          tags: |
-            ${{ steps.meta.outputs.full_image }}
-            ${{ env.AR_REPO }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      - name: Build and push
+        run: |
+          FULL_IMAGE="${{ env.AR_REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.AR_REPO_NAME }}/${{ env.IMAGE_NAME }}"
+          docker buildx build \
+            --platform linux/amd64 \
+            --file docker/Dockerfile \
+            --tag "${FULL_IMAGE}:${{ steps.meta.outputs.image_tag }}" \
+            --tag "${FULL_IMAGE}:latest" \
+            --push \
+            .
 
   deploy:
     needs: build-and-push
@@ -89,7 +87,8 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
+          FULL_IMAGE="${{ env.AR_REGISTRY }}/${{ secrets.GCP_PROJECT_ID }}/${{ env.AR_REPO_NAME }}/${{ env.IMAGE_NAME }}"
           gcloud run deploy ${{ env.CLOUD_RUN_SERVICE }} \
-            --image=${{ needs.build-and-push.outputs.full_image }} \
+            --image="${FULL_IMAGE}:${{ needs.build-and-push.outputs.image_tag }}" \
             --region=${{ env.GCP_REGION }} \
             --update-env-vars="IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }},GIT_SHA=${{ github.sha }}"
