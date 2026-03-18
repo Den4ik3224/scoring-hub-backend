@@ -115,8 +115,21 @@ def upgrade() -> None:
         if not blob_row:
             continue
 
-        rows = _parse_blob(blob_row[0], fmt)
+        try:
+            rows = _parse_blob(blob_row[0], fmt)
+        except Exception:
+            continue
         if not rows:
+            continue
+
+        # Skip datasets with old/incompatible column schemas
+        first_row_keys = set(rows[0].keys())
+        required_keys = {
+            "baseline_metrics": {"segment_id", "date_start", "date_end", "active_users"},
+            "baseline_funnel_steps": {"segment_id", "screen", "step_id", "entered_users"},
+            "cannibalization_matrix": {"from_screen", "to_screen", "segment_id", "cannibalization_rate"},
+        }
+        if not required_keys.get(schema_type, set()).issubset(first_row_keys):
             continue
 
         if schema_type == "baseline_metrics":
