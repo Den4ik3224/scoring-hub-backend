@@ -115,6 +115,91 @@ def test_upload_preview_and_score_happy_path(tmp_path: Path) -> None:
     asyncio.run(engine.dispose())
 
 
+def test_upload_preview_happy_path_with_european_csv(tmp_path: Path) -> None:
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    async def _setup() -> async_sessionmaker[AsyncSession]:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    import asyncio
+
+    session_maker = asyncio.run(_setup())
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
+    client = _override_app(session_maker, settings)
+
+    european_csv = (
+        "segment_id;date_start;date_end;active_users;ordering_users;orders;items;rto;fm\n"
+        "s1;2025-01-01 00:00:00;2025-01-31 00:00:00;1000;100;200;210;4000,5;1200,25\n"
+        "s1;2025-02-01 00:00:00;2025-02-28 00:00:00;1000;100;200;210;4000,5;1200,25\n"
+        "s1;2025-03-01 00:00:00;2025-03-31 00:00:00;1000;100;200;210;4000,5;1200,25\n"
+    )
+    upload_resp = client.post(
+        "/datasets/upload",
+        params={
+            "dataset_name": "baseline_eu",
+            "format": "csv",
+            "schema_type": "baseline_metrics",
+            "dataset_version": "v1",
+        },
+        files={"file": ("baseline.csv", european_csv, "text/csv")},
+    )
+    assert upload_resp.status_code == 200, upload_resp.text
+
+    preview_resp = client.get("/datasets/baseline_eu/v1/preview", params={"limit": 10})
+    assert preview_resp.status_code == 200
+    row = preview_resp.json()["rows"][0]
+    assert row["date_start"] == "2025-01-01"
+    assert row["rto"] == 4000.5
+
+    app.dependency_overrides = {}
+    asyncio.run(engine.dispose())
+
+
+def test_upload_invalid_csv_returns_actionable_422(tmp_path: Path) -> None:
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+
+    async def _setup() -> async_sessionmaker[AsyncSession]:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        return async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    import asyncio
+
+    session_maker = asyncio.run(_setup())
+    settings = Settings(database_url="sqlite+aiosqlite://", data_dir=None, max_upload_mb=10)
+    client = _override_app(session_maker, settings)
+
+    bad_csv = (
+        "segment_id|date_start|date_end|active_users|ordering_users|orders|items|rto|fm\n"
+        "s1|2025-01-01|2025-01-31|1000|100|200|210|4000.5|1200.25\n"
+    )
+    upload_resp = client.post(
+        "/datasets/upload",
+        params={
+            "dataset_name": "baseline_bad",
+            "format": "csv",
+            "schema_type": "baseline_metrics",
+            "dataset_version": "v1",
+        },
+        files={"file": ("baseline.csv", bad_csv, "text/csv")},
+    )
+    assert upload_resp.status_code == 422
+    assert upload_resp.json()["error"]["message"].startswith("Could not recognize CSV delimiter")
+
+    app.dependency_overrides = {}
+    asyncio.run(engine.dispose())
+
+
 def test_auth_and_admin_enforcement(tmp_path: Path) -> None:
     engine = create_async_engine(
         "sqlite+aiosqlite://",

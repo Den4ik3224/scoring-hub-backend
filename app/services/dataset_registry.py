@@ -1,10 +1,10 @@
+import csv
 import hashlib
 import io
 import json
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import pyarrow as pa
-import pyarrow.csv as pa_csv
 import pyarrow.parquet as pq
 from fastapi import UploadFile
 from sqlalchemy.exc import IntegrityError
@@ -13,20 +13,188 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.db.models import Dataset
 from app.db.repositories import datasets as dataset_repo
-from app.services.validators import SCHEMAS, validate_dataset_table
+from app.services.validators import ColumnKind, SCHEMAS, validate_dataset_table
 
 
 def generate_dataset_version() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
 
 
+CSV_SUPPORT_HINT = (
+    "Supported CSV uploads: standard comma-delimited CSV, or semicolon-delimited CSV with decimal comma."
+)
+_CSV_DELIMITER_CANDIDATES = (",", ";")
+
+
+def _decode_csv_text(data: bytes) -> str:
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValidationError(f"Unable to decode CSV file as UTF-8. {CSV_SUPPORT_HINT}") from exc
+
+
+def _detect_csv_delimiter(text: str) -> str:
+    non_empty_rows = [row for row in csv.reader(io.StringIO(text), delimiter=",") if any(cell.strip() for cell in row)]
+    if not non_empty_rows:
+        raise ValidationError("CSV file is empty")
+
+    for delimiter in _CSV_DELIMITER_CANDIDATES:
+        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        widths: list[int] = []
+        for row in reader:
+            if not row or not any(cell.strip() for cell in row):
+                continue
+            widths.append(len(row))
+            if len(widths) >= 10:
+                break
+        if widths and widths[0] > 1 and all(width == widths[0] for width in widths):
+            return delimiter
+
+    raise ValidationError(
+        "Could not recognize CSV delimiter. "
+        f"{CSV_SUPPORT_HINT}"
+    )
+
+
+def _parse_csv_bytes(data: bytes) -> pa.Table:
+    try:
+        text = _decode_csv_text(data)
+        delimiter = _detect_csv_delimiter(text)
+        reader = csv.reader(io.StringIO(text), delimiter=delimiter)
+        rows = [row for row in reader if any(cell.strip() for cell in row)]
+        if not rows:
+            raise ValidationError("CSV file is empty")
+
+        header = [cell.lstrip("\ufeff").strip() for cell in rows[0]]
+        if not header or any(not cell for cell in header):
+            raise ValidationError("CSV header contains empty column names")
+        if len(set(header)) != len(header):
+            raise ValidationError("CSV header contains duplicate column names")
+
+        data_rows = rows[1:]
+        for index, row in enumerate(data_rows, start=2):
+            if len(row) != len(header):
+                raise ValidationError(
+                    f"CSV row {index} has {len(row)} columns, expected {len(header)}. "
+                    f"{CSV_SUPPORT_HINT}"
+                )
+
+        columns = {
+            column: pa.array([row[pos].strip() for row in data_rows], type=pa.string())
+            for pos, column in enumerate(header)
+        }
+        return pa.table(columns)
+    except csv.Error as exc:
+        raise ValidationError(f"CSV parse error. {CSV_SUPPORT_HINT}") from exc
+
+
 def _parse_upload_bytes(data: bytes, fmt: str) -> pa.Table:
     buf = io.BytesIO(data)
     if fmt == "csv":
-        return pa_csv.read_csv(buf)
+        return _parse_csv_bytes(data)
     if fmt == "parquet":
         return pq.read_table(buf)
     raise ValidationError(f"Unsupported format `{fmt}`")
+
+
+def _normalize_text_value(value: object) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _normalize_date_value(value: object, column_name: str) -> str:
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+
+    text = _normalize_text_value(value)
+    if not text:
+        raise ValidationError(f"Column `{column_name}` contains empty date values. {CSV_SUPPORT_HINT}")
+
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError:
+        pass
+
+    try:
+        normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+        return datetime.fromisoformat(normalized).date().isoformat()
+    except ValueError as exc:
+        raise ValidationError(
+            f"Column `{column_name}` contains invalid date value `{text}`. "
+            "Use `YYYY-MM-DD` or an ISO timestamp. "
+            f"{CSV_SUPPORT_HINT}"
+        ) from exc
+
+
+def _normalize_numeric_value(value: object, column_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValidationError(f"Column `{column_name}` contains invalid numeric value `{value}`. {CSV_SUPPORT_HINT}")
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = _normalize_text_value(value)
+    if not text:
+        raise ValidationError(f"Column `{column_name}` contains empty numeric values. {CSV_SUPPORT_HINT}")
+
+    compact = (
+        text.replace(" ", "")
+        .replace("\u00a0", "")
+        .replace("\u202f", "")
+    )
+    if "," in compact and "." in compact:
+        raise ValidationError(
+            f"Column `{column_name}` contains ambiguous numeric value `{text}`. "
+            "Use either dot decimals or decimal comma without thousands separators. "
+            f"{CSV_SUPPORT_HINT}"
+        )
+
+    normalized = compact.replace(",", ".")
+    try:
+        return float(normalized)
+    except ValueError as exc:
+        raise ValidationError(
+            f"Column `{column_name}` contains invalid numeric value `{text}`. "
+            f"{CSV_SUPPORT_HINT}"
+        ) from exc
+
+
+def _normalize_integer_value(value: object, column_name: str) -> int:
+    numeric_value = _normalize_numeric_value(value, column_name)
+    if not numeric_value.is_integer():
+        raise ValidationError(f"Column `{column_name}` must contain integer values")
+    return int(numeric_value)
+
+
+def _normalize_csv_table(table: pa.Table, *, schema_type: str) -> pa.Table:
+    normalized_columns: dict[str, pa.Array] = {}
+    for spec in SCHEMAS[schema_type]:
+        raw_values = table.column(spec.name).to_pylist()
+        if spec.name in {"date_start", "date_end"}:
+            normalized_columns[spec.name] = pa.array(
+                [_normalize_date_value(value, spec.name) for value in raw_values],
+                type=pa.string(),
+            )
+        elif spec.kind == ColumnKind.string:
+            normalized_columns[spec.name] = pa.array(
+                [_normalize_text_value(value) for value in raw_values],
+                type=pa.string(),
+            )
+        elif spec.kind == ColumnKind.integer:
+            normalized_columns[spec.name] = pa.array(
+                [_normalize_integer_value(value, spec.name) for value in raw_values],
+                type=pa.int64(),
+            )
+        elif spec.kind == ColumnKind.float:
+            normalized_columns[spec.name] = pa.array(
+                [_normalize_numeric_value(value, spec.name) for value in raw_values],
+                type=pa.float64(),
+            )
+        else:
+            normalized_columns[spec.name] = pa.array(raw_values)
+    return pa.table(normalized_columns)
 
 
 async def read_upload_to_bytes(upload_file: UploadFile, max_upload_mb: int) -> tuple[bytes, str]:
@@ -95,6 +263,8 @@ async def store_and_register_dataset(
         schema_type=schema_type,
         column_mapping=column_mapping,
     )
+    if fmt == "csv":
+        table = _normalize_csv_table(table, schema_type=schema_type)
 
     rows = table.to_pylist()
     latest_snapshot: Dataset | None = None

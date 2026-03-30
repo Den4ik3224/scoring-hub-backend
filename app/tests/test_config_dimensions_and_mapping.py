@@ -608,6 +608,67 @@ def test_dataset_upload_with_column_mapping_success(tmp_path: Path) -> None:
         _teardown(engine)
 
 
+def test_dataset_upload_supports_semicolon_decimal_comma_and_timestamp_dates(tmp_path: Path) -> None:
+    client, engine = _setup_client(tmp_path)
+    try:
+        csv = (
+            "segment_id;date_start;date_end;active_users;ordering_users;orders;items;rto;fm\n"
+            "s1;2025-01-01 00:00:00;2025-01-31 00:00:00;1000;100;200;210;4000,5;1200,25\n"
+            "s1;2025-02-01 00:00:00;2025-02-28 00:00:00;1100;110;220;231;4400,75;1320,50\n"
+            "s1;2025-03-01 00:00:00;2025-03-31 00:00:00;1200;120;240;252;4800,25;1440,75\n"
+        )
+        response = client.post(
+            "/datasets/upload",
+            params={
+                "dataset_name": "baseline_eu",
+                "format": "csv",
+                "schema_type": "baseline_metrics",
+                "dataset_version": "v1",
+            },
+            files={"file": ("baseline.csv", csv, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+
+        preview = client.get("/datasets/baseline_eu/v1/preview", params={"limit": 3})
+        assert preview.status_code == 200, preview.text
+        row = preview.json()["rows"][0]
+        assert row["date_start"] == "2025-01-01"
+        assert row["date_end"] == "2025-01-31"
+        assert row["rto"] == 4000.5
+        assert row["fm"] == 1200.25
+    finally:
+        _teardown(engine)
+
+
+def test_funnel_upload_supports_semicolon_and_timestamp_dates(tmp_path: Path) -> None:
+    client, engine = _setup_client(tmp_path)
+    try:
+        csv = (
+            "segment_id;screen;step_id;step_name;step_order;date_start;date_end;entered_users;advanced_users\n"
+            "s1;checkout;cart_to_checkout;Cart to checkout;1;2025-01-01 00:00:00;2025-01-31 00:00:00;1000;700\n"
+            "s1;checkout;checkout_to_order;Checkout to order;2;2025-01-01 00:00:00;2025-01-31 00:00:00;700;620\n"
+        )
+        response = client.post(
+            "/datasets/upload",
+            params={
+                "dataset_name": "funnel_eu",
+                "format": "csv",
+                "schema_type": "baseline_funnel_steps",
+                "dataset_version": "v1",
+            },
+            files={"file": ("funnel.csv", csv, "text/csv")},
+        )
+        assert response.status_code == 200, response.text
+
+        preview = client.get("/datasets/funnel_eu/v1/preview", params={"limit": 10})
+        assert preview.status_code == 200, preview.text
+        row = preview.json()["rows"][0]
+        assert row["date_start"] == "2025-01-01"
+        assert row["step_order"] == 1
+    finally:
+        _teardown(engine)
+
+
 def test_dataset_upload_with_column_mapping_errors(tmp_path: Path) -> None:
     client, engine = _setup_client(tmp_path)
     try:
@@ -659,6 +720,77 @@ def test_dataset_upload_with_column_mapping_errors(tmp_path: Path) -> None:
             },
         )
         assert unknown_key_error.status_code == 422
+    finally:
+        _teardown(engine)
+
+
+def test_dataset_upload_invalid_numeric_returns_422(tmp_path: Path) -> None:
+    client, engine = _setup_client(tmp_path)
+    try:
+        csv = (
+            "segment_id;date_start;date_end;active_users;ordering_users;orders;items;rto;fm\n"
+            "s1;2025-01-01 00:00:00;2025-01-31 00:00:00;1000;100;200;210;bad_number;1200,25\n"
+        )
+        response = client.post(
+            "/datasets/upload",
+            params={
+                "dataset_name": "baseline_bad_numeric",
+                "format": "csv",
+                "schema_type": "baseline_metrics",
+                "dataset_version": "v1",
+            },
+            files={"file": ("baseline.csv", csv, "text/csv")},
+        )
+        assert response.status_code == 422
+        assert "rto" in response.text
+        assert "invalid numeric value" in response.text
+    finally:
+        _teardown(engine)
+
+
+def test_dataset_upload_invalid_date_returns_422(tmp_path: Path) -> None:
+    client, engine = _setup_client(tmp_path)
+    try:
+        csv = (
+            "segment_id;date_start;date_end;active_users;ordering_users;orders;items;rto;fm\n"
+            "s1;01.01.2025 00:00:00;2025-01-31 00:00:00;1000;100;200;210;4000,5;1200,25\n"
+        )
+        response = client.post(
+            "/datasets/upload",
+            params={
+                "dataset_name": "baseline_bad_date",
+                "format": "csv",
+                "schema_type": "baseline_metrics",
+                "dataset_version": "v1",
+            },
+            files={"file": ("baseline.csv", csv, "text/csv")},
+        )
+        assert response.status_code == 422
+        assert "date_start" in response.text
+        assert "invalid date value" in response.text
+    finally:
+        _teardown(engine)
+
+
+def test_dataset_upload_unrecognized_delimiter_returns_422(tmp_path: Path) -> None:
+    client, engine = _setup_client(tmp_path)
+    try:
+        csv = (
+            "segment_id|date_start|date_end|active_users|ordering_users|orders|items|rto|fm\n"
+            "s1|2025-01-01|2025-01-31|1000|100|200|210|4000.5|1200.25\n"
+        )
+        response = client.post(
+            "/datasets/upload",
+            params={
+                "dataset_name": "baseline_bad_delimiter",
+                "format": "csv",
+                "schema_type": "baseline_metrics",
+                "dataset_version": "v1",
+            },
+            files={"file": ("baseline.csv", csv, "text/csv")},
+        )
+        assert response.status_code == 422
+        assert "Could not recognize CSV delimiter" in response.text
     finally:
         _teardown(engine)
 
